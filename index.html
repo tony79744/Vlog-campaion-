@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>AR AI Vlogging Companion</title>
-  <!-- Three.js और GLTFLoader -->
+  <!-- Three.js और GLTFLoader CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <style>
@@ -22,7 +22,7 @@
       position: absolute;
       top: 0; left: 0; width: 100%; height: 100%;
       z-index: 2;
-      pointer-events: auto;
+      pointer-events: none;
     }
 
     .controls {
@@ -71,7 +71,7 @@
       left: 15px;
       right: 15px;
       padding: 10px 14px;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.75);
       color: #00ffcc;
       border-radius: 12px;
       font-size: 13px;
@@ -89,8 +89,8 @@
   <!-- 3D AR सीन -->
   <canvas id="three-canvas"></canvas>
 
-  <!-- स्थिति और सबटाइटल -->
-  <div id="status-box">स्थिति: कैमरा और सिस्टम शुरू हो रहा है...</div>
+  <!-- स्टेटस बॉक्स -->
+  <div id="status-box">सिस्टम लोड हो रहा है...</div>
 
   <!-- कंट्रोल बटन -->
   <div class="controls">
@@ -104,13 +104,13 @@
     const video = document.getElementById('camera-video');
     const canvas = document.getElementById('three-canvas');
 
-    let scene, camera, renderer, model;
+    let scene, camera, renderer, model, mixer;
     let clock = new THREE.Clock();
     let isRecording = false;
     let mediaRecorder;
     let recordedChunks = [];
 
-    // 1. कैमरा
+    // 1. बैकग्राउंड कैमरा
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -118,7 +118,7 @@
           audio: false
         });
         video.srcObject = stream;
-        statusBox.innerText = "कैमरा चालू है। गर्ल कैरेक्टर लोड हो रहा है...";
+        statusBox.innerText = "कैमरा सक्रिय। मॉडल आ रहा है...";
       } catch (err) {
         statusBox.innerText = "कैमरा एरर: " + err.message;
       }
@@ -128,34 +128,40 @@
     function initThree() {
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 0.4, 2.0);
+      camera.position.set(0, 1.2, 2.8);
 
       renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x555555, 1.4);
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
       scene.add(hemiLight);
 
-      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-      dirLight.position.set(0, 4, 3);
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+      dirLight.position.set(2, 6, 4);
       scene.add(dirLight);
 
-      // हाई क्वालिटी फीमेल (Girl) 3D मॉडल
+      // हाई-स्पीड रिलायबल 3D अवतार
       const loader = new THREE.GLTFLoader();
-      const modelUrl = 'https://models.readyplayer.me/661feb3563b4a87a148eb0df.glb';
+      const modelUrl = 'https://threejs.org/examples/models/gltf/Soldier.glb';
 
       loader.load(modelUrl, (gltf) => {
         model = gltf.scene;
         
-        // स्क्रीन के बिल्कुल बीच (X = 0) में सेट
-        model.scale.set(1.0, 1.0, 1.0);
-        model.position.set(0, -0.9, 0);
+        // स्क्रीन के केंद्र में अलाइनमेंट
+        model.scale.set(0.9, 0.9, 0.9);
+        model.position.set(0, -1.0, 0);
         scene.add(model);
 
-        statusBox.innerText = "आपकी साथी तैयार है! बात करने के लिए 🎙️ दबाएं।";
+        if (gltf.animations && gltf.animations.length > 0) {
+          mixer = new THREE.AnimationMixer(model);
+          const idleAction = mixer.clipAction(gltf.animations[0]); // Idle animation
+          idleAction.play();
+        }
+
+        statusBox.innerText = "आपकी साथी स्क्रीन पर आ चुकी है! बात करने के लिए 🎙️ दबाएं।";
       }, undefined, (err) => {
-        statusBox.innerText = "मॉडल लोड करने में समस्या: " + err.message;
+        statusBox.innerText = "मॉडल लोड एरर: " + err.message;
       });
 
       animate();
@@ -163,10 +169,11 @@
 
     function animate() {
       requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      if (mixer) mixer.update(delta);
 
-      // हल्का सांस लेने का रियल मोशन
       if (model) {
-        model.position.y = -0.9 + Math.sin(Date.now() * 0.003) * 0.015;
+        model.position.y = -1.0 + Math.sin(Date.now() * 0.003) * 0.015;
       }
 
       renderer.render(scene, camera);
@@ -174,12 +181,12 @@
 
     function resetCharacterPos() {
       if (model) {
-        model.position.set(0, -0.9, 0);
-        statusBox.innerText = "कैरेक्टर स्क्रीन के बीच में आ गया।";
+        model.position.set(0, -1.0, 0);
+        statusBox.innerText = "कैरेक्टर स्क्रीन के बीच में है।";
       }
     }
 
-    // 3. वॉइस इंटरैक्शन
+    // 3. वॉइस पहचान व बुद्धिमान वार्तालाप (Smart Contextual Replies)
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognition = null;
     let isListening = false;
@@ -192,14 +199,14 @@
 
       recognition.onresult = function(event) {
         const transcript = event.results[0][0].transcript;
-        statusBox.innerText = `आपने कहा: "${transcript}"`;
-        botReply(transcript);
+        statusBox.innerText = `आपने पूछा: "${transcript}"`;
+        generateSmartReply(transcript);
       };
 
       recognition.onerror = function(event) {
         isListening = false;
         document.getElementById('talk-btn').innerText = "🎙️ बात करें";
-        statusBox.innerText = "माइक एरर (" + event.error + ") - दोबारा टैप करें।";
+        statusBox.innerText = "आवाज़ नहीं सुन पाई (" + event.error + ")। दोबारा बोलें।";
       };
 
       recognition.onend = function() {
@@ -210,7 +217,7 @@
 
     function toggleSpeech() {
       if (!recognition) {
-        alert("Chrome ब्राउज़र का उपयोग करें।");
+        alert("Chrome ब्राउज़र में उपयोग करें।");
         return;
       }
 
@@ -223,7 +230,7 @@
           recognition.start();
           isListening = true;
           document.getElementById('talk-btn').innerText = "🔴 सुन रही हूँ...";
-          statusBox.innerText = "बोलिए, मैं सुन रही हूँ...";
+          statusBox.innerText = "बोलिए, मैं ध्यान से सुन रही हूँ...";
         } catch (e) {
           recognition.stop();
           isListening = false;
@@ -231,21 +238,32 @@
       }
     }
 
-    function botReply(userText) {
-      statusBox.innerText = "साथी सोच रही है...";
-      
-      let reply = "हाँ, सब कुछ बहुत बढ़िया दिख रहा है! आगे क्या करने वाले हैं?";
-      if (userText.includes("कैसी हो") || userText.includes("कैसा")) {
-        reply = "मैं बहुत अच्छी हूँ! आज के व्लॉग में हम क्या नया देखने वाले हैं?";
-      } else if (userText.includes("नमस्ते") || userText.includes("हेलो")) {
-        reply = "नमस्ते! आज आपके साथ व्लॉगिंग करके बहुत मज़ा आने वाला है।";
-      } else if (userText.includes("कहाँ") || userText.includes("रास्ता")) {
-        reply = "हम बिल्कुल सही जगह पर हैं, आगे बढ़ते रहिए।";
+    function generateSmartReply(query) {
+      statusBox.innerText = "साथी उत्तर तैयार कर रही है...";
+      const text = query.toLowerCase();
+      let reply = "";
+
+      if (text.includes("कैसी हो") || text.includes("कैसा है") || text.includes("क्या हाल")) {
+        reply = "मैं बहुत बढ़िया हूँ! आपके साथ व्लॉग बनाने के लिए बिल्कुल तैयार। आप कैसे हैं?";
+      } else if (text.includes("नमस्ते") || text.includes("हेलो") || text.includes("हाय")) {
+        reply = "नमस्ते! आज के व्लॉग में हम क्या खास दिखाने वाले हैं?";
+      } else if (text.includes("नाम") || text.includes("कौन हो")) {
+        reply = "मैं आपकी AI व्लॉगिंग साथी हूँ। आपके वीडियो और सफर में आपका साथ दूंगी।";
+      } else if (text.includes("कहाँ") || text.includes("जगह") || text.includes("रास्ता")) {
+        reply = "यह लोकेशन बहुत खूबसूरत लग रही है! दर्शकों को यहाँ के बारे में विस्तार से बताइए।";
+      } else if (text.includes("मौसम") || text.includes("धूप") || text.includes("बारिश")) {
+        reply = "यहाँ का वातावरण बहुत शांत और रिकॉर्डिंग के लिए एकदम सही लग रहा है।";
+      } else if (text.includes("दिख नहीं रही") || text.includes("कहाँ हो")) {
+        reply = "मैं बिल्कुल आपके सामने स्क्रीन के बीच में खड़ी हूँ! आप कैमरा सीधा रखिए।";
+      } else if (text.includes("क्या करें") || text.includes("शुरू")) {
+        reply = "चलिए कैमरा घुमाइए और व्लॉग का एक शानदार इंट्रो शूट करते हैं!";
+      } else {
+        reply = `आपने "${query}" कहा। यह बहुत दिलचस्प है! दर्शकों के साथ इसे और शेयर कीजिए।`;
       }
 
       setTimeout(() => {
         speakResponse(reply);
-      }, 500);
+      }, 400);
     }
 
     function speakResponse(text) {
@@ -255,12 +273,12 @@
       statusBox.innerText = `साथी: "${text}"`;
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'hi-IN';
-      utterance.pitch = 1.25; // प्यारी लड़की की आवाज़
+      utterance.pitch = 1.2;
       utterance.rate = 1.0;
       window.speechSynthesis.speak(utterance);
     }
 
-    // 4. स्क्रीन रिकॉर्डर
+    // 4. इन-ऐप स्क्रीन रिकॉर्डर
     async function toggleRecord() {
       const recBtn = document.getElementById('rec-btn');
       if (!isRecording) {
@@ -301,13 +319,13 @@
             URL.revokeObjectURL(url);
             document.body.removeChild(a);
           }, 100);
-          statusBox.innerText = "वीडियो आपके फ़ोन में सेव हो गई है!";
+          statusBox.innerText = "व्लॉग वीडियो सफलतापूर्वक सेव हो गई!";
         };
 
         mediaRecorder.start();
         recBtn.innerText = "⏹️ रोकें व सेव करें";
         recBtn.classList.add('recording');
-        statusBox.innerText = "व्लॉग रिकॉर्डिंग चालू है...";
+        statusBox.innerText = "रिकॉर्डिंग चालू है...";
       } else {
         isRecording = false;
         mediaRecorder.stop();
