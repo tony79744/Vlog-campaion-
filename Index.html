@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AR AI Companion - Prototype v1</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body, html { width: 100vw; height: 100vh; overflow: hidden; background: #000; font-family: sans-serif; }
+    
+    /* Live Back Camera Feed */
+    #camera-feed {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      object-fit: cover; z-index: 1;
+    }
+
+    /* 3D AR Canvas */
+    #ar-canvas {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      z-index: 2; pointer-events: auto;
+    }
+
+    /* Top Control Bar */
+    #top-ui {
+      position: fixed; top: 12px; left: 12px; right: 12px; z-index: 10;
+      display: flex; gap: 8px; align-items: center;
+      background: rgba(0, 0, 0, 0.65); padding: 8px 12px; border-radius: 12px;
+      backdrop-filter: blur(6px); color: #fff; font-size: 13px;
+    }
+    #api-key {
+      flex: 1; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+      color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 12px;
+    }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%; background: #00e676;
+    }
+
+    /* Subtitle / AI Dialogue Box */
+    #dialogue-box {
+      position: fixed; bottom: 85px; left: 16px; right: 16px; z-index: 10;
+      background: rgba(15, 15, 20, 0.82); color: #fff; padding: 12px 16px;
+      border-radius: 14px; border-left: 4px solid #00e676;
+      font-size: 14px; line-height: 1.4; text-align: left;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
+
+    /* Bottom Action Controls */
+    #bottom-ui {
+      position: fixed; bottom: 18px; left: 12px; right: 12px; z-index: 10;
+      display: flex; justify-content: space-between; gap: 8px;
+    }
+    .btn {
+      flex: 1; background: rgba(25, 25, 35, 0.85); color: #fff;
+      border: 1px solid rgba(255,255,255,0.25); padding: 11px 6px;
+      border-radius: 10px; font-size: 13px; font-weight: bold;
+      text-align: center; active: scale(0.96);
+    }
+    .btn.active { background: #00c853; color: #000; border-color: #00e676; }
+  </style>
+</head>
+<body>
+
+  <!-- Live AR Camera Feed -->
+  <video id="camera-feed" autoplay playsinline muted></video>
+  
+  <!-- Hidden Canvas for Gemini Vision Frame Capture -->
+  <canvas id="capture-canvas" style="display:none;"></canvas>
+
+  <!-- Top Bar: Gemini API Key & Status -->
+  <div id="top-ui">
+    <div class="status-dot" id="status-dot"></div>
+    <input type="password" id="api-key" placeholder="Gemini API Key डालें (Optional)">
+    <button class="btn" style="flex:0.4; padding:6px;" onclick="saveKey()">Save</button>
+  </div>
+
+  <!-- AI Companion Subtitle Box -->
+  <div id="dialogue-box">
+    <b>AI Companion:</b> नमस्ते! ज़मीन पर टैप करें तो मैं चलकर आऊँगी। मेरे हाथ/सिर (Green Zone) या कमर (Red Zone) को छूकर बाउंड्री टेस्ट करें।
+  </div>
+
+  <!-- Bottom Action Buttons -->
+  <div id="bottom-ui">
+    <button class="btn" id="btn-walk" onclick="setFloorWalkMode()">🚶 यहाँ बुलाएं</button>
+    <button class="btn" id="btn-sit" onclick="toggleSit()">🪑 बैठो / उठो</button>
+    <button class="btn" id="btn-vision" onclick="triggerProactiveVision(true)">👁️ सामने देखो</button>
+    <button class="btn" id="btn-closer" onclick="testProximity()">📏 1.5ft टेस्ट</button>
+  </div>
+
+  <!-- Three.js & GLTFLoader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script>
+    // =========================================================================
+    // PHASE 1: 1-CLICK PREFAB REPLACE URL (Dummy Model -> Final Realistic GLB)
+    // =========================================================================
+    const CHARACTER_URL = 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/gltf/Xbot.glb';
+
+    let scene, camera, renderer, clock, mixer;
+    let character, skeleton, animations = {};
+    let currentAction = null;
+    let isSitting = false, isWalking = false;
+    let targetPosition = new THREE.Vector3(0, -1.1, -2.6);
+    let greenZoneMesh, redZoneMesh, floorPlane;
+    let silenceTimer = null;
+    const SILENCE_LIMIT_MS = 10000; // 10 सेकंड सन्नाटा टाइमर
+
+    // Load saved Gemini API key
+    document.getElementById('api-key').value = localStorage.getItem('GEMINI_KEY') || '';
+    function saveKey() {
+      localStorage.setItem('GEMINI_KEY', document.getElementById('api-key').value.trim());
+      speakDialogue("आपकी Gemini API Key सेव हो गई है! अब मैं हर 10 सेकंड में आसपास देखकर बात करूँगी।");
+      resetSilenceTimer();
+    }
+
+    // =========================================================================
+    // PHASE 2: CAMERA & REAL-TIME SHADOW AR SETUP
+    // =========================================================================
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        document.getElementById('camera-feed').srcObject = stream;
+      } catch (err) {
+        updateDialogue("कैमरा परमिशन नहीं मिली। कृपया HTTPS (GitHub Pages) पर खोलें और कैमरा Allow करें।");
+      }
+    }
+
+    function initARScene() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera.position.set(0, 0.4, 0);
+
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.domElement.id = 'ar-canvas';
+      document.body.appendChild(renderer.domElement);
+
+      clock = new THREE.Clock();
+
+      // Light Estimation & Real-Time Ground Shadow
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.1);
+      hemiLight.position.set(0, 10, 0);
+      scene.add(hemiLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      dirLight.position.set(2, 6, 2);
+      dirLight.castShadow = true;
+      dirLight.shadow.mapSize.width = 1024;
+      dirLight.shadow.mapSize.height = 1024;
+      scene.add(dirLight);
+
+      // Transparent Shadow Catcher Floor
+      const floorGeo = new THREE.PlaneGeometry(20, 20);
+      const floorMat = new THREE.ShadowMaterial({ opacity: 0.45 });
+      floorPlane = new THREE.Mesh(floorGeo, floorMat);
+      floorPlane.rotation.x = -Math.PI / 2;
+      floorPlane.position.y = -1.1;
+      floorPlane.receiveShadow = true;
+      floorPlane.name = "AR_FLOOR";
+      scene.add(floorPlane);
+
+      // Load 3D Character
+      const loader = new THREE.GLTFLoader();
+      loader.load(CHARACTER_URL, (gltf) => {
+        character = gltf.scene;
+        character.position.copy(targetPosition);
+        character.scale.set(1.0, 1.0, 1.0);
+
+        character.traverse((obj) => {
+          if (obj.isMesh) {
+            obj.castShadow = true;
+            obj.receiveShadow = true;
+          }
+        });
+
+        scene.add(character);
+
+        // Setup Animations
+        mixer = new THREE.AnimationMixer(character);
+        gltf.animations.forEach((clip) => {
+          animations[clip.name] = mixer.clipAction(clip);
+        });
+        playAnim('idle');
+
+        // Setup Phase 4 Touch Colliders (Green & Red Zones)
+        setupTouchZones();
+      });
+
+      window.addEventListener('resize', onWindowResize);
+      renderer.domElement.addEventListener('pointerdown', onScreenTap);
+
+      resetSilenceTimer();
+      animate();
+    }
+
+    // =========================================================================
+    // PHASE 4: PERSONAL BOUNDARIES (GREEN ZONE vs RED ZONE COLLIDERS)
+    // =========================================================================
+    function setupTouchZones() {
+      const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
+
+      // Green Zone: Head & Upper Shoulders/Hands
+      const greenGeo = new THREE.SphereGeometry(0.32, 12, 12);
+      greenZoneMesh = new THREE.Mesh(greenGeo, invisibleMat);
+      greenZoneMesh.position.set(0, 1.55, 0);
+      greenZoneMesh.name = "GREEN_ZONE";
+      character.add(greenZoneMesh);
+
+      // Red Zone: Waist & Sensitive Torso
+      const redGeo = new THREE.CylinderGeometry(0.26, 0.26, 0.55, 12);
+      redZoneMesh = new THREE.Mesh(redGeo, invisibleMat);
+      redZoneMesh.position.set(0, 0.95, 0);
+      redZoneMesh.name = "RED_ZONE";
+      character.add(redZoneMesh);
+    }
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function onScreenTap(event) {
+      resetSilenceTimer();
+      pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+      pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(pointer, camera);
+      if (!character) return;
+
+      // 1. Check Touch Boundaries First
+      const zoneHits = raycaster.intersectObjects([greenZoneMesh, redZoneMesh], true);
+      if (zoneHits.length > 0) {
+        const hitName = zoneHits[0].object.name;
+        if (hitName === "GREEN_ZONE") {
+          playAnim('agree');
+          speakDialogue("हाय दोस्त! हाथ मिलाने और बात करने के लिए शुक्रिया। चलो व्लॉग शुरू करते हैं!");
+          setTimeout(() => playAnim('idle'), 2200);
+          return;
+        } else if (hitName === "RED_ZONE") {
+          // 2 Steps Back + Strict Objection
+          targetPosition.z -= 0.75;
+          isWalking = true;
+          playAnim('headShake');
+          speakDialogue("पीछे हटिए! इस तरह छूना बिल्कुल मना है। अपनी बाउंड्री में रहिए!");
+          setTimeout(() => playAnim('idle'), 2500);
+          return;
+        }
+      }
+
+      // 2. Check Floor Tap for Game-Like Walking
+      const floorHits = raycaster.intersectObject(floorPlane);
+      if (floorHits.length > 0) {
+        const point = floorHits[0].point;
+        if (point.z < -0.7 && point.z > -7.0) {
+          isSitting = false;
+          targetPosition.set(point.x, -1.1, point.z);
+          isWalking = true;
+          playAnim('walk');
+        }
+      }
+    }
+
+    // 1.5 Feet Personal Space Check
+    function testProximity() {
+      if (!character) return;
+      character.position.set(0, -1.1, -0.45); // Move inside 1.5ft limit
+      setTimeout(() => {
+        targetPosition.set(0.45, -1.1, -2.2); // Step aside & back
+        isWalking = true;
+        playAnim('walk');
+        speakDialogue("अरे संभलकर! थोड़ी जगह दीजिए, आप बहुत ज़्यादा करीब आ गए हैं।");
+      }, 400);
+    }
+
+    function setFloorWalkMode() {
+      if (!character) return;
+      isSitting = false;
+      targetPosition.set((Math.random() - 0.5) * 1.2, -1.1, -2.2);
+      isWalking = true;
+      playAnim('walk');
+      speakDialogue("मैं आपके पास चलकर आ रही हूँ!");
+    }
+
+    function toggleSit() {
+      if (!character) return;
+      isSitting = !isSitting;
+      if (isSitting) {
+        isWalking = false;
+        playAnim('sneak_pose');
+        character.position.y = -1.42;
+        speakDialogue("वाह, यहाँ बैठने की अच्छी जगह है! अगर किसी और ने मेरी सीट ली तो मैं तुरंत उठ जाऊँगी।");
+      } else {
+        character.position.y = -1.1;
+        playAnim('idle');
+        speakDialogue("चलो, अब उठकर आगे चलते हैं!");
+      }
+    }
+
+    function playAnim(name) {
+      if (!animations[name]) return;
+      if (currentAction && currentAction !== animations[name]) {
+        currentAction.fadeOut(0.25);
+      }
+      currentAction = animations[name];
+      currentAction.reset().fadeIn(0.25).play();
+    }
+
+    // =========================================================================
+    // PHASE 5 & 6: PROACTIVE GEMINI VISION + 3-SEC OFFLINE FALLBACK + TTS
+    // =========================================================================
+    function resetSilenceTimer() {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        triggerProactiveVision(false);
+      }, SILENCE_LIMIT_MS);
+    }
+
+    async function triggerProactiveVision(manualTrigger) {
+      resetSilenceTimer();
+      const apiKey = localStorage.getItem('GEMINI_KEY');
+      
+      // Capture 1 frame from live camera
+      const video = document.getElementById('camera-feed');
+      const capCanvas = document.getElementById('capture-canvas');
+      capCanvas.width = 480;
+      capCanvas.height = 360;
+      const ctx = capCanvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, capCanvas.width, capCanvas.height);
+      const base64Image = capCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+      if (!apiKey) {
+        if (manualTrigger) {
+          speakDialogue("सामने का नज़ारा बढ़िया लग रहा है! ऊपर अपनी Gemini API Key डालेंगे तो मैं सामने रखी हर चीज़ पहचान कर बात करूँगी।");
+        }
+        return;
+      }
+
+      // Phase 6: 3-Second Offline Fallback Timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      try {
+        document.getElementById('status-dot').style.background = '#ffeb3b';
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: "तुम मेरी एक जीवंत 3D AR व्लॉगिंग पार्टनर हो। सामने कैमरे में जो दिख रहा है (कमरा, गाड़ी, खाना, सड़क, दुकान या सामान), उसे देखकर एक दोस्त की तरह हिंदी में सिर्फ 1 छोटा और मजेदार वाक्य या सवाल बोलो।" },
+                { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+              ]
+            }]
+          })
+        });
+        clearTimeout(timeoutId);
+        const data = await response.json();
+        document.getElementById('status-dot').style.background = '#00e676';
+        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "अरे वाह, सामने का माहौल तो काफी दिलचस्प लग रहा है!";
+        speakDialogue(reply);
+      } catch (err) {
+        // Offline Fallback Triggered after 3 seconds
+        document.getElementById('status-dot').style.background = '#ff9100';
+        speakDialogue("हम्म... नेटवर्क थोड़ा स्लो लग रहा है, पर मैं यहीं आपके साथ हूँ! बताइए अगला शॉट कहाँ लेना है?");
+      }
+    }
+
+    function updateDialogue(text) {
+      document.getElementById('dialogue-box').innerHTML = `<b>AI Companion:</b> ${text}`;
+    }
+
+    function speakDialogue(text) {
+      updateDialogue(text);
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = 'hi-IN';
+        utter.rate = 1.02;
+        window.speechSynthesis.speak(utter);
+      }
+    }
+
+    // =========================================================================
+    // PHASE 3: LIVING IDLE SYSTEM & GAME-LIKE MOVEMENT LOOP
+    // =========================================================================
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      const elapsed = clock.getElapsedTime();
+
+      if (mixer) mixer.update(delta);
+
+      if (character) {
+        // Smooth Walking towards Target Position
+        if (isWalking) {
+          const dist = character.position.distanceTo(targetPosition);
+          if (dist > 0.08) {
+            const dir = new THREE.Vector3().subVectors(targetPosition, character.position).normalize();
+            character.position.addScaledVector(dir, delta * 1.15);
+            character.lookAt(camera.position.x, character.position.y, camera.position.z);
+          } else {
+            isWalking = false;
+            playAnim('idle');
+          }
+        } else {
+          // Living Breathing Loop & Subtle Micro-Movement + Look-At User
+          const breathScale = 1.0 + Math.sin(elapsed * 2.5) * 0.008;
+          character.scale.y = breathScale;
+          character.lookAt(camera.position.x, character.position.y, camera.position.z);
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    initCamera();
+    initARScene();
+  </script>
+</body>
+</html>
