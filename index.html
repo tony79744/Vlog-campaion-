@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AR AI Companion</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body, html { width: 100vw; height: 100vh; overflow: hidden; background: #0a0e14; font-family: sans-serif; }
+    #camera-feed { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
+    #ar-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: auto; }
+    #overlay-ui { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 12px; }
+    #top-bar { pointer-events: auto; display: flex; gap: 6px; align-items: center; background: rgba(15,20,28,0.85); padding: 8px 10px; border-radius: 12px; border: 1px solid rgba(0,230,118,0.35); }
+    #status-dot { width: 11px; height: 11px; border-radius: 50%; background: #00e676; flex-shrink: 0; box-shadow: 0 0 8px #00e676; }
+    #api-key { flex: 1; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25); color: #fff; padding: 6px 8px; border-radius: 8px; font-size: 12px; }
+    .mini-btn { background: #00e676; color: #000; border: none; padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: bold; }
+    .mini-btn.locked { background: #ff1744; color: #fff; }
+    #dialogue-box { pointer-events: auto; background: rgba(10,14,22,0.85); color: #00e676; padding: 12px 16px; border-radius: 14px; border-left: 4px solid #00e676; font-size: 14px; line-height: 1.45; margin-top: 8px; }
+    #start-ar-btn { pointer-events: auto; align-self: center; background: linear-gradient(135deg, #00e676, #00b0ff); color: #000; font-weight: bold; font-size: 15px; padding: 15px 24px; border-radius: 30px; border: none; box-shadow: 0 8px 25px rgba(0,230,118,0.55); }
+    #bottom-panel { pointer-events: auto; display: flex; flex-direction: column; gap: 8px; }
+    .btn-row { display: flex; gap: 6px; justify-content: space-between; }
+    .ctrl-btn { flex: 1; background: rgba(15,22,32,0.88); color: #fff; border: 1.5px solid #00e676; padding: 10px 6px; border-radius: 22px; font-size: 12px; font-weight: bold; text-align: center; }
+    .ctrl-btn.active { background: #00e676; color: #000; }
+    .ctrl-btn.danger { background: #ff1744; border-color: #ff1744; color: #fff; }
+  </style>
+</head>
+<body>
+  <video id="camera-feed" autoplay playsinline muted></video>
+  <canvas id="capture-canvas" style="display:none;"></canvas>
+  <div id="overlay-ui">
+    <div>
+      <div id="top-bar">
+        <div id="status-dot"></div>
+        <input type="password" id="api-key" placeholder="Gemini API Key यहाँ डालें">
+        <button class="mini-btn" onclick="saveApiKey(event)">Save</button>
+        <button class="mini-btn" id="stranger-btn" onclick="toggleStrangerLock(event)">🔓 Owner</button>
+      </div>
+      <div id="dialogue-box">साथी: "मैं आपकी AI व्लॉगिंग साथी हूँ! असली ज़मीन पर मुझे खड़ा करने के लिए नीचे हरे बटन पर टैप करें।"</div>
+    </div>
+    <button id="start-ar-btn" onclick="startRealFloorAR(event)">⚡ असली फ्लोर AR चालू करें (Pokémon GO Mode)</button>
+    <div id="bottom-panel">
+      <div class="btn-row">
+        <button class="ctrl-btn" id="roam-btn" onclick="toggleRoam(event)">🚶 खुद घूमो</button>
+        <button class="ctrl-btn" id="sit-btn" onclick="toggleSit(event)">🪑 बैठो / उठो</button>
+        <button class="ctrl-btn" onclick="triggerProactiveVision(true, event)">👁️ सामने देखो</button>
+        <button class="ctrl-btn" onclick="testPersonalSpace(event)">📏 1.5ft टेस्ट</button>
+      </div>
+      <div class="btn-row">
+        <button class="ctrl-btn" onclick="startVoiceTalk(event)">🎙️ बात करें</button>
+        <button class="ctrl-btn" id="rec-btn" onclick="toggleRecording(event)">⏺️ रिकॉर्डिंग</button>
+        <button class="ctrl-btn" onclick="recenterToFloor(event)">🔄 सेंटर लाएं</button>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script>
+    const CHARACTER_URL = 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/gltf/Xbot.glb';
+    let scene, camera, renderer, clock, mixer, character, reticle, floorGroup, greenRing, redRing, groundPlane;
+    let animations = {}, currentAction = null, hitTestSource = null, hitTestSourceRequested = false;
+    let isRealARActive = false, isFloorScanMode = false, isPlacedOnFloor = false;
+    let isWalking = false, isRoaming = false, isSitting = false, strangerLock = false, roamTimer = 0;
+    let targetPosition = new THREE.Vector3(0, -1.2, -2.4);
+    let deviceAlpha = 0, deviceBeta = 75, initialAlpha = null, gyroEnabled = false;
+    let mediaRecorder = null, recordedChunks = [], isRecording = false;
+    const raycaster = new THREE.Raycaster();
+
+    window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('api-key').value = localStorage.getItem('GEMINI_API_KEY') || '';
+      initScene(); startFallbackCamera(); setupGyroscope();
+    });
+
+    function updateDialogue(t) { document.getElementById('dialogue-box').innerText = 'साथी: "' + t + '"'; }
+    function speakDialogue(t) {
+      updateDialogue(t);
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(t); u.lang = 'hi-IN'; window.speechSynthesis.speak(u);
+      }
+    }
+    function saveApiKey(e) {
+      if (e) e.stopPropagation();
+      localStorage.setItem('GEMINI_API_KEY', document.getElementById('api-key').value.trim());
+      speakDialogue('आपकी जेमिनी एपीआई की सेव हो गई है! अब नीचे हरे बटन पर टैप करें।');
+    }
+    function toggleStrangerLock(e) {
+      if (e) e.stopPropagation();
+      strangerLock = !strangerLock;
+      const b = document.getElementById('stranger-btn');
+      b.innerText = strangerLock ? '🔒 Stranger' : '🔓 Owner';
+      b.classList.toggle('locked', strangerLock);
+      speakDialogue(strangerLock ? 'स्ट्रेंजर लॉक चालू हो गया है।' : 'ओनर मोड चालू है!');
+    }
+    async function startFallbackCamera() {
+      const v = document.getElementById('camera-feed');
+      try {
+        v.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        await v.play();
+      } catch (e) {
+        try { v.srcObject = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); await v.play(); }
+        catch (e2) { updateDialogue('कृपया ब्राउज़र में Camera Permission को Allow करें।'); }
+      }
+    }
+    function setupGyroscope() {
+      window.addEventListener('deviceorientation', (ev) => {
+        if (ev.beta !== null) {
+          gyroEnabled = true;
+          if (initialAlpha === null && ev.alpha !== null) initialAlpha = ev.alpha;
+          deviceAlpha = ev.alpha !== null ? ev.alpha - (initialAlpha || 0) : 0;
+          deviceBeta = ev.beta;
+        }
+      }, true);
+    }
+    function initScene() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 50);
+      camera.position.set(0, 1.4, 0);
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.xr.enabled = true; renderer.domElement.id = 'ar-canvas';
+      document.body.appendChild(renderer.domElement);
+      clock = new THREE.Clock();
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.2));
+      const dl = new THREE.DirectionalLight(0xffffff, 1.1); dl.position.set(2, 6, 3); scene.add(dl);
+      groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.3 }));
+      groundPlane.rotation.x = -Math.PI / 2; scene.add(groundPlane);
+      reticle = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.25, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x00e676, side: THREE.DoubleSide }));
+      reticle.visible = false; scene.add(reticle);
+      floorGroup = new THREE.Group(); floorGroup.visible = false; scene.add(floorGroup);
+      greenRing = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.52, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x00e676, side: THREE.DoubleSide, transparent: true, opacity: 0.7 }));
+      greenRing.position.y = 0.01; floorGroup.add(greenRing);
+      redRing = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.45, 36).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff1744, side: THREE.DoubleSide, transparent: true, opacity: 0 }));
+      redRing.position.y = 0.015; floorGroup.add(redRing);
+      new THREE.GLTFLoader().load(CHARACTER_URL, (gltf) => {
+        character = gltf.scene; character.scale.set(0.85, 0.85, 0.85); floorGroup.add(character);
+        mixer = new THREE.AnimationMixer(character);
+        gltf.animations.forEach((c) => { animations[c.name.toLowerCase()] = mixer.clipAction(c); });
+        playAnimation('idle');
+      });
+      renderer.domElement.addEventListener('pointerdown', onScreenTap);
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+      renderer.setAnimationLoop(renderLoop);
+    }
+    function playAnimation(n) {
+      if (!animations[n]) return;
+      const a = animations[n];
+      if (currentAction !== a) { if (currentAction) currentAction.fadeOut(0.25); a.reset().fadeIn(0.25).play(); currentAction = a; }
+    }
+    async function startRealFloorAR(e) {
+      if (e) e.stopPropagation();
+      await startFallbackCamera();
+      document.getElementById('start-ar-btn').style.display = 'none';
+      if (navigator.xr) {
+        try {
+          if (await navigator.xr.isSessionSupported('immersive-ar')) {
+            const s = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: document.getElementById('overlay-ui') } });
+            renderer.xr.setReferenceSpaceType('local'); await renderer.xr.setSession(s); isRealARActive = true;
+            return speakDialogue('असली फ्लोर AR चालू हो गया! ज़मीन पर हरे घेरे पर टैप करें।');
+          }
+        } catch (err) {}
+      }
+      isFloorScanMode = true; reticle.visible = true; reticle.position.set(0, 0.02, -2.2);
+      speakDialogue('ज़मीन पर हरा घेरा दिख रहा है! मुझे वहां खड़ा करने के लिए स्क्रीन पर टैप करें।');
+    }
+    function onScreenTap(e) {
+      if (reticle.visible) {
+        floorGroup.position.copy(reticle.position); targetPosition.copy(floorGroup.position);
+        floorGroup.visible = true; isPlacedOnFloor = true; reticle.visible = false; isFloorScanMode = false;
+        lookAtCameraFlat(); speakDialogue('मैं असली ज़मीन पर लॉक हो गई हूँ!');
+      } else if (isPlacedOnFloor) {
+        const m = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+        raycaster.setFromCamera(m, camera);
+        const h = raycaster.intersectObject(groundPlane);
+        if (h.length > 0) { targetPosition.copy(h[0].point); isWalking = true; isSitting = false; character.scale.y = 0.85; playAnimation('walk'); }
+      }
+    }
+    function lookAtCameraFlat() { const p = new THREE.Vector3(); camera.getWorldPosition(p); floorGroup.lookAt(p.x, floorGroup.position.y, p.z); }
+    function placeCharacterDefault() {
+      document.getElementById('start-ar-btn').style.display = 'none';
+      reticle.visible = false; isFloorScanMode = false; isPlacedOnFloor = true; floorGroup.visible = true;
+      floorGroup.position.set(0, 0, -2.2); targetPosition.copy(floorGroup.position); lookAtCameraFlat();
+    }
+    function toggleRoam(e) {
+      if (e) e.stopPropagation();
+      if (strangerLock) return speakDialogue('स्ट्रेंजर लॉक चालू है!');
+      if (!isPlacedOnFloor) placeCharacterDefault();
+      isRoaming = !isRoaming; document.getElementById('roam-btn').classList.toggle('active', isRoaming);
+      if (isRoaming) { isSitting = false; character.scale.y = 0.85; pickNewRoamTarget(); speakDialogue('मैं खुद टहल रही हूँ!'); }
+      else { isWalking = false; playAnimation('idle'); speakDialogue('मैं रुक गई हूँ।'); }
+    }
+    function pickNewRoamTarget() {
+      const a = Math.random() * Math.PI * 2, r = 0.8 + Math.random() * 1.2;
+      targetPosition.set(Math.sin(a) * r, 0, -2.0 + Math.cos(a) * r); isWalking = true; playAnimation('walk');
+    }
+    function toggleSit(e) {
+      if (e) e.stopPropagation();
+      if (strangerLock) return speakDialogue('स्ट्रेंजर लॉक चालू है!');
+      if (!isPlacedOnFloor) placeCharacterDefault();
+      isSitting = !isSitting; isRoaming = false; isWalking = false;
+      document.getElementById('roam-btn').classList.remove('active');
+      document.getElementById('sit-btn').classList.toggle('active', isSitting);
+      character.scale.set(0.85, isSitting ? 0.52 : 0.85, 0.85); playAnimation('idle');
+      speakDialogue(isSitting ? 'मैं आराम से बैठ गई हूँ।' : 'मैं वापस खड़ी हो गई हूँ!');
+    }
+    function testPersonalSpace(e) {
+      if (e) e.stopPropagation();
+      if (!isPlacedOnFloor) placeCharacterDefault();
+      redRing.material.opacity = 0.85; floorGroup.position.z -= 0.45; targetPosition.copy(floorGroup.position); playAnimation('walk');
+      setTimeout(() => { playAnimation('idle'); redRing.material.opacity = 0; }, 1800);
+      speakDialogue('चेतावनी! आप 1.5 फीट के रेड ज़ोन के करीब आ गए हैं, मैं पीछे हट गई हूँ।');
+    }
+    function recenterToFloor(e) { if (e) e.stopPropagation(); initialAlpha = null; placeCharacterDefault(); speakDialogue('मैं वापस आपके सामने ज़मीन पर आ गई हूँ!'); }
+    async function triggerProactiveVision(m, e) {
+      if (e) e.stopPropagation();
+      const k = localStorage.getItem('GEMINI_API_KEY');
+      if (!k) return speakDialogue('कृपया पहले ऊपर Gemini API Key डालकर Save दबाएं।');
+      const v = document.getElementById('camera-feed'), c = document.getElementById('capture-canvas');
+      c.width = 480; c.height = 360; c.getContext('2d').drawImage(v, 0, 0, 480, 360);
+      const b64 = c.toDataURL('image/jpeg', 0.7).split(',')[1];
+      updateDialogue('साथी सामने का नज़ारा देख रही है...');
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${k}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: 'तुम मेरी हिंदी एआई व्लॉगिंग साथी हो। इस तस्वीर पर 1-2 छोटे वाक्यों में दोस्ताना हिंदी में टिप्पणी करो।' }, { inline_data: { mime_type: 'image/jpeg', data: b64 } }] }] })
+        });
+        const d = await r.json(); speakDialogue((d?.candidates?.[0]?.content?.parts?.[0]?.text || 'नज़ारा बहुत बढ़िया है!').trim());
+      } catch (err) { speakDialogue('कैमरे का दृश्य प्रोसेस करने में नेटवर्क की थोड़ी दिक्कत आई!'); }
+    }
+    function startVoiceTalk(e) {
+      if (e) e.stopPropagation();
+      if (strangerLock) return speakDialogue('स्ट्रेंजर लॉक चालू है!');
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) return speakDialogue('ब्राउज़र में वॉइस सपोर्ट नहीं है।');
+      const rec = new SR(); rec.lang = 'hi-IN'; updateDialogue('बोलिए, मैं सुन रही हूँ...');
+      rec.onresult = async (ev) => {
+        const txt = ev.results[0][0].transcript; updateDialogue('आपने कहा: "' + txt + '"');
+        const k = localStorage.getItem('GEMINI_API_KEY');
+        if (!k) return speakDialogue('एआई जवाब के लिए ऊपर Gemini API Key सेव करें।');
+        try {
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${k}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: `तुम हिंदी AR व्लॉगिंग साथी हो। यूजर ने कहा: "${txt}"। 1-2 वाक्यों में हिंदी में जवाब दो।` }] }] })
+          });
+          const d = await r.json(); speakDialogue((d?.candidates?.[0]?.content?.parts?.[0]?.text || 'बिल्कुल सही कहा!').trim());
+        } catch (err) { speakDialogue('आपकी बात सुन ली!'); }
+      };
+      rec.onerror = () => speakDialogue('आवाज़ साफ नहीं आई, दोबारा बोलें।'); rec.start();
+    }
+    function toggleRecording(e) {
+      if (e) e.stopPropagation();
+      const b = document.getElementById('rec-btn');
+      if (!isRecording) {
+        try {
+          mediaRecorder = new MediaRecorder(renderer.domElement.captureStream(30)); recordedChunks = [];
+          mediaRecorder.ondataavailable = (ev) => { if (ev.data.size > 0) recordedChunks.push(ev.data); };
+          mediaRecorder.onstop = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(recordedChunks, { type: 'video/webm' })); a.download = 'ar-vlog.webm'; a.click(); };
+          mediaRecorder.start(); isRecording = true; b.classList.add('danger'); b.innerText = '⏹️ स्टॉप'; speakDialogue('रिकॉर्डिंग शुरू!');
+        } catch (err) { speakDialogue('रिकॉर्डिंग उपलब्ध नहीं है।'); }
+      } else { mediaRecorder.stop(); isRecording = false; b.classList.remove('danger'); b.innerText = '⏺️ रिकॉर्डिंग'; speakDialogue('रिकॉर्डिंग सेव हो गई!'); }
+    }
+    function renderLoop(ts, frame) {
+      const dt = clock.getDelta(); if (mixer) mixer.update(dt);
+      if (!isRealARActive && gyroEnabled) {
+        camera.rotation.order = 'YXZ';
+        camera.rotation.x = THREE.MathUtils.clamp(THREE.MathUtils.degToRad(deviceBeta - 90), -Math.PI / 2.2, Math.PI / 3);
+        camera.rotation.y = THREE.MathUtils.degToRad(deviceAlpha);
+      }
+      if (isFloorScanMode && !isRealARActive) {
+        raycaster.setFromCamera({ x: 0, y: -0.2 }, camera);
+        const h = raycaster.intersectObject(groundPlane);
+        if (h.length > 0) { reticle.position.copy(h[0].point); reticle.position.y = 0.02; }
+      }
+      if (frame && isRealARActive) {
+        const ref = renderer.xr.getReferenceSpace(), ses = renderer.xr.getSession();
+        if (!hitTestSourceRequested) {
+          ses.requestReferenceSpace('viewer').then((vs) => ses.requestHitTestSource({ space: vs }).then((s) => { hitTestSource = s; }));
+          hitTestSourceRequested = true;
+        }
+        if (hitTestSource && !isPlacedOnFloor) {
+          const res = frame.getHitTestResults(hitTestSource);
+          if (res.length > 0) { reticle.visible = true; reticle.matrix.fromArray(res[0].getPose(ref).transform.matrix); reticle.matrix.decompose(reticle.position, reticle.quaternion, reticle.scale); }
+        }
+      }
+      if (isPlacedOnFloor && isWalking) {
+        if (floorGroup.position.distanceTo(targetPosition) > 0.08) {
+          const dir = new THREE.Vector3().subVectors(targetPosition, floorGroup.position).normalize();
+          floorGroup.position.addScaledVector(dir, dt * 0.9); floorGroup.lookAt(targetPosition.x, floorGroup.position.y, targetPosition.z);
+        } else { isWalking = false; playAnimation('idle'); lookAtCameraFlat(); if (isRoaming) roamTimer = 2.5; }
+      } else if (isRoaming && !isWalking) { roamTimer -= dt; if (roamTimer <= 0) pickNewRoamTarget(); }
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
