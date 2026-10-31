@@ -3,120 +3,190 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>AR AI Companion - Prototype v1</title>
+  <title>AR AI Companion - Full Master Plan</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-    body, html { width: 100vw; height: 100vh; overflow: hidden; background: #000; font-family: sans-serif; }
-    
-    /* Live Back Camera Feed */
+    body, html { width: 100vw; height: 100vh; overflow: hidden; background: #0a0e14; font-family: sans-serif; }
+
+    /* फॉलबैक कैमरा (जब WebXR शुरू न हुआ हो और Gemini Vision फ्रेम कैप्चर के लिए) */
     #camera-feed {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
       object-fit: cover; z-index: 1;
     }
 
-    /* 3D AR Canvas */
+    /* 3D AR कैनवास */
     #ar-canvas {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
       z-index: 2; pointer-events: auto;
     }
 
-    /* Top Control Bar */
-    #top-ui {
-      position: fixed; top: 12px; left: 12px; right: 12px; z-index: 10;
-      display: flex; gap: 8px; align-items: center;
-      background: rgba(0, 0, 0, 0.65); padding: 8px 12px; border-radius: 12px;
-      backdrop-filter: blur(6px); color: #fff; font-size: 13px;
+    /* मुख्य AR ओवरले UI */
+    #overlay-ui {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      z-index: 10; pointer-events: none;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: 12px;
+    }
+
+    /* ऊपर की पट्टी: API Key, स्टेटस और स्ट्रेंजर लॉक */
+    #top-bar {
+      pointer-events: auto;
+      display: flex; gap: 6px; align-items: center;
+      background: rgba(15, 20, 28, 0.85); padding: 8px 10px;
+      border-radius: 12px; border: 1px solid rgba(0, 230, 118, 0.35);
+      backdrop-filter: blur(6px);
+    }
+    #status-dot {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: #00e676; flex-shrink: 0;
     }
     #api-key {
-      flex: 1; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
-      color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 12px;
+      flex: 1; background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.25); color: #fff;
+      padding: 6px 8px; border-radius: 8px; font-size: 12px;
     }
-    .status-dot {
-      width: 10px; height: 10px; border-radius: 50%; background: #00e676;
+    .mini-btn {
+      background: #00e676; color: #000; border: none;
+      padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: bold;
     }
+    .mini-btn.locked { background: #ff1744; color: #fff; }
 
-    /* Subtitle / AI Dialogue Box */
+    /* संवाद और सबटाइटल बॉक्स */
     #dialogue-box {
-      position: fixed; bottom: 85px; left: 16px; right: 16px; z-index: 10;
-      background: rgba(15, 15, 20, 0.82); color: #fff; padding: 12px 16px;
-      border-radius: 14px; border-left: 4px solid #00e676;
-      font-size: 14px; line-height: 1.4; text-align: left;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      pointer-events: auto;
+      background: rgba(18, 24, 32, 0.9); color: #00e676;
+      padding: 12px 16px; border-radius: 14px;
+      border-left: 4px solid #00e676;
+      font-size: 14px; line-height: 1.45; text-align: left;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+      margin-top: 8px;
     }
 
-    /* Bottom Action Controls */
-    #bottom-ui {
-      position: fixed; bottom: 18px; left: 12px; right: 12px; z-index: 10;
-      display: flex; justify-content: space-between; gap: 8px;
+    /* पोकेमॉन गो स्टाइल फ्लोर AR चालू करने का मुख्य बटन */
+    #start-ar-btn {
+      pointer-events: auto; align-self: center;
+      background: linear-gradient(135deg, #00e676, #00b0ff);
+      color: #000; font-weight: bold; font-size: 15px;
+      padding: 15px 24px; border-radius: 30px; border: none;
+      box-shadow: 0 8px 25px rgba(0, 230, 118, 0.55);
     }
-    .btn {
-      flex: 1; background: rgba(25, 25, 35, 0.85); color: #fff;
-      border: 1px solid rgba(255,255,255,0.25); padding: 11px 6px;
-      border-radius: 10px; font-size: 13px; font-weight: bold;
-      text-align: center; active: scale(0.96);
+
+    /* नीचे के सभी गेम कंट्रोल्स */
+    #bottom-panel {
+      pointer-events: auto;
+      display: flex; flex-direction: column; gap: 8px;
     }
-    .btn.active { background: #00c853; color: #000; border-color: #00e676; }
+    .btn-row {
+      display: flex; gap: 6px; justify-content: space-between;
+    }
+    .ctrl-btn {
+      flex: 1; background: rgba(18, 24, 34, 0.88); color: #fff;
+      border: 1.5px solid rgba(0, 230, 118, 0.5);
+      padding: 10px 6px; border-radius: 20px;
+      font-size: 12px; font-weight: bold; text-align: center;
+    }
+    .ctrl-btn.active { background: #00e676; color: #000; }
+    .ctrl-btn.rec-active { background: #ff1744; color: #fff; border-color: #ff5252; }
   </style>
 </head>
 <body>
 
-  <!-- Live AR Camera Feed -->
+  <!-- बैकग्राउंड कैमरा और Gemini Vision स्नैपशॉट कैनवास -->
   <video id="camera-feed" autoplay playsinline muted></video>
-  
-  <!-- Hidden Canvas for Gemini Vision Frame Capture -->
   <canvas id="capture-canvas" style="display:none;"></canvas>
 
-  <!-- Top Bar: Gemini API Key & Status -->
-  <div id="top-ui">
-    <div class="status-dot" id="status-dot"></div>
-    <input type="password" id="api-key" placeholder="Gemini API Key डालें (Optional)">
-    <button class="btn" style="flex:0.4; padding:6px;" onclick="saveKey()">Save</button>
+  <!-- मुख्य इंटरफेस (AR के अंदर भी दिखेगा) -->
+  <div id="overlay-ui">
+    <div>
+      <div id="top-bar">
+        <div id="status-dot"></div>
+        <input type="password" id="api-key" placeholder="Gemini API Key यहाँ डालें">
+        <button class="mini-btn" onclick="saveApiKey(event)">Save</button>
+        <button class="mini-btn" id="stranger-btn" onclick="toggleStrangerLock(event)">🔓 Owner</button>
+      </div>
+
+      <div id="dialogue-box">
+        साथी: "मैं आपकी AI व्लॉगिंग साथी हूँ! असली ज़मीन पर मुझे खड़ा करने के लिए नीचे हरे बटन पर टैप करें।"
+      </div>
+    </div>
+
+    <button id="start-ar-btn" onclick="startRealFloorAR(event)">
+      ⚡ असली फ्लोर AR चालू करें (Pokémon GO Mode)
+    </button>
+
+    <div id="bottom-panel">
+      <div class="btn-row">
+        <button class="ctrl-btn" id="roam-btn" onclick="toggleRoam(event)">🚶 खुद घूमो</button>
+        <button class="ctrl-btn" id="sit-btn" onclick="toggleSit(event)">🪑 बैठो / उठो</button>
+        <button class="ctrl-btn" onclick="triggerProactiveVision(true, event)">👁️ सामने देखो</button>
+        <button class="ctrl-btn" onclick="testPersonalSpace(event)">📏 1.5ft टेस्ट</button>
+      </div>
+      <div class="btn-row">
+        <button class="ctrl-btn" onclick="startVoiceTalk(event)">🗣️ बात करें</button>
+        <button class="ctrl-btn" id="rec-btn" onclick="toggleRecording(event)">⏺️ रिकॉर्डिंग</button>
+        <button class="ctrl-btn" onclick="recenterToFloor(event)">🔄 सेंटर लाएं</button>
+      </div>
+    </div>
   </div>
 
-  <!-- AI Companion Subtitle Box -->
-  <div id="dialogue-box">
-    <b>AI Companion:</b> नमस्ते! ज़मीन पर टैप करें तो मैं चलकर आऊँगी। मेरे हाथ/सिर (Green Zone) या कमर (Red Zone) को छूकर बाउंड्री टेस्ट करें।
-  </div>
-
-  <!-- Bottom Action Buttons -->
-  <div id="bottom-ui">
-    <button class="btn" id="btn-walk" onclick="setFloorWalkMode()">🚶 यहाँ बुलाएं</button>
-    <button class="btn" id="btn-sit" onclick="toggleSit()">🪑 बैठो / उठो</button>
-    <button class="btn" id="btn-vision" onclick="triggerProactiveVision(true)">👁️ सामने देखो</button>
-    <button class="btn" id="btn-closer" onclick="testProximity()">📏 1.5ft टेस्ट</button>
-  </div>
-
-  <!-- Three.js & GLTFLoader -->
+  <!-- Three.js और GLTFLoader -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
   <script>
     // =========================================================================
-    // PHASE 1: 1-CLICK PREFAB REPLACE URL (Dummy Model -> Final Realistic GLB)
+    // PHASE 1: 1-CLICK PREFAB REPLACE (डमी मॉडल या असली .GLB मॉडल लिंक)
     // =========================================================================
     const CHARACTER_URL = 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/gltf/Xbot.glb';
 
     let scene, camera, renderer, clock, mixer;
-    let character, skeleton, animations = {};
-    let currentAction = null;
-    let isSitting = false, isWalking = false;
-    let targetPosition = new THREE.Vector3(0, -1.1, -2.6);
-    let greenZoneMesh, redZoneMesh, floorPlane;
-    let silenceTimer = null;
-    const SILENCE_LIMIT_MS = 10000; // 10 सेकंड सन्नाटा टाइमर
+    let character, reticle, shadowPlane;
+    let greenZoneCollider, redZoneCollider;
+    let animations = {}, currentAction = null;
 
-    // Load saved Gemini API key
-    document.getElementById('api-key').value = localStorage.getItem('GEMINI_KEY') || '';
-    function saveKey() {
-      localStorage.setItem('GEMINI_KEY', document.getElementById('api-key').value.trim());
-      speakDialogue("आपकी Gemini API Key सेव हो गई है! अब मैं हर 10 सेकंड में आसपास देखकर बात करूँगी।");
+    // WebXR Hit-Test (असली ज़मीन पहचानने के वेरिएबल्स)
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
+    let isRealARActive = false;
+    let isPlacedOnFloor = false;
+
+    // मूवमेंट और स्टेट वेरिएबल्स
+    let isWalking = false;
+    let isRoaming = false;
+    let isSitting = false;
+    let strangerLock = false;
+    let targetPosition = new THREE.Vector3(0, -1.1, -2.5);
+    let roamWaitTimer = 0;
+    let idleShiftTimer = 0;
+    let proximityCooldown = 0;
+
+    // साइलेंस टाइमर (Phase 5: 10 सेकंड सन्नाटा डिटेक्टर)
+    let silenceTimer = null;
+    const SILENCE_DELAY = 10000;
+
+    // रिकॉर्डिंग वेरिएबल्स (Phase 6)
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecording = false;
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    // सेव की गई Gemini Key लोड करें
+    document.getElementById('api-key').value = localStorage.getItem('GEMINI_API_KEY') || '';
+
+    function saveApiKey(e) {
+      if (e) e.stopPropagation();
+      const val = document.getElementById('api-key').value.trim();
+      localStorage.setItem('GEMINI_API_KEY', val);
+      speakDialogue("आपकी जेमिनी एपीआई की सेव हो गई है! अब मैं हर दस सेकंड में माहौल देखकर खुद बात करूँगी।");
       resetSilenceTimer();
     }
 
     // =========================================================================
-    // PHASE 2: CAMERA & REAL-TIME SHADOW AR SETUP
+    // PHASE 2: CAMERA, THREE.JS SCENE & REAL-TIME FLOOR SHADOWS
     // =========================================================================
-    async function initCamera() {
+    async function startFallbackCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -124,308 +194,323 @@
         });
         document.getElementById('camera-feed').srcObject = stream;
       } catch (err) {
-        updateDialogue("कैमरा परमिशन नहीं मिली। कृपया HTTPS (GitHub Pages) पर खोलें और कैमरा Allow करें।");
+        console.log("Camera waiting for user permission.");
       }
     }
 
-    function initARScene() {
+    function initMasterScene() {
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.01, 50);
       camera.position.set(0, 0.4, 0);
 
-      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.xr.enabled = true;
       renderer.domElement.id = 'ar-canvas';
       document.body.appendChild(renderer.domElement);
 
       clock = new THREE.Clock();
 
-      // Light Estimation & Real-Time Ground Shadow
-      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.1);
-      hemiLight.position.set(0, 10, 0);
+      // रियल-टाइम लाइट और ज़मीन की परछाई
+      const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+      hemiLight.position.set(0, 8, 0);
       scene.add(hemiLight);
 
-      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
       dirLight.position.set(2, 6, 2);
       dirLight.castShadow = true;
       dirLight.shadow.mapSize.width = 1024;
       dirLight.shadow.mapSize.height = 1024;
       scene.add(dirLight);
 
-      // Transparent Shadow Catcher Floor
-      const floorGeo = new THREE.PlaneGeometry(20, 20);
+      // पारदर्शी शैडो कैचर फर्श (ज़मीन पर असली परछाई के लिए)
+      const floorGeo = new THREE.PlaneGeometry(25, 25);
       const floorMat = new THREE.ShadowMaterial({ opacity: 0.45 });
-      floorPlane = new THREE.Mesh(floorGeo, floorMat);
-      floorPlane.rotation.x = -Math.PI / 2;
-      floorPlane.position.y = -1.1;
-      floorPlane.receiveShadow = true;
-      floorPlane.name = "AR_FLOOR";
-      scene.add(floorPlane);
+      shadowPlane = new THREE.Mesh(floorGeo, floorMat);
+      shadowPlane.rotation.x = -Math.PI / 2;
+      shadowPlane.position.y = -1.1;
+      shadowPlane.receiveShadow = true;
+      shadowPlane.name = "SHADOW_FLOOR";
+      scene.add(shadowPlane);
 
-      // Load 3D Character
+      // पोकेमॉन गो जैसा ज़मीन स्कैन करने वाला हरा टारगेट रिंग (Reticle)
+      const ringGeo = new THREE.RingGeometry(0.14, 0.20, 32).rotateX(-Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x00e676, side: THREE.DoubleSide });
+      reticle = new THREE.Mesh(ringGeo, ringMat);
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
+
+      // 3D कैरेक्टर लोड करना
       const loader = new THREE.GLTFLoader();
       loader.load(CHARACTER_URL, (gltf) => {
         character = gltf.scene;
         character.position.copy(targetPosition);
-        character.scale.set(1.0, 1.0, 1.0);
+        character.scale.set(0.9, 0.9, 0.9);
 
-        character.traverse((obj) => {
-          if (obj.isMesh) {
-            obj.castShadow = true;
-            obj.receiveShadow = true;
+        character.traverse((node) => {
+          if (node.isMesh) {
+            node.castShadow = true;
+            node.receiveShadow = true;
           }
         });
-
         scene.add(character);
 
-        // Setup Animations
         mixer = new THREE.AnimationMixer(character);
         gltf.animations.forEach((clip) => {
           animations[clip.name] = mixer.clipAction(clip);
         });
-        playAnim('idle');
-
-        // Setup Phase 4 Touch Colliders (Green & Red Zones)
-        setupTouchZones();
+        playAnimation('idle');
+        createBodyZoneColliders();
       });
 
-      window.addEventListener('resize', onWindowResize);
-      renderer.domElement.addEventListener('pointerdown', onScreenTap);
+      window.addEventListener('pointerdown', onScreenTap);
+      window.addEventListener('resize', onResize);
 
       resetSilenceTimer();
-      animate();
+      renderer.setAnimationLoop(masterRenderLoop);
     }
 
     // =========================================================================
-    // PHASE 4: PERSONAL BOUNDARIES (GREEN ZONE vs RED ZONE COLLIDERS)
+    // PHASE 4: GREEN ZONE, RED ZONE & STRANGER LOCK COLLIDERS
     // =========================================================================
-    function setupTouchZones() {
-      const invisibleMat = new THREE.MeshBasicMaterial({ visible: false });
+    function createBodyZoneColliders() {
+      const hiddenMat = new THREE.MeshBasicMaterial({ visible: false });
 
-      // Green Zone: Head & Upper Shoulders/Hands
-      const greenGeo = new THREE.SphereGeometry(0.32, 12, 12);
-      greenZoneMesh = new THREE.Mesh(greenGeo, invisibleMat);
-      greenZoneMesh.position.set(0, 1.55, 0);
-      greenZoneMesh.name = "GREEN_ZONE";
-      character.add(greenZoneMesh);
+      // ग्रीन ज़ोन (सिर, कंधे और हाथ)
+      greenZoneCollider = new THREE.Mesh(new THREE.SphereGeometry(0.36, 12, 12), hiddenMat);
+      greenZoneCollider.position.set(0, 1.52, 0);
+      greenZoneCollider.name = "GREEN_ZONE";
+      character.add(greenZoneCollider);
 
-      // Red Zone: Waist & Sensitive Torso
-      const redGeo = new THREE.CylinderGeometry(0.26, 0.26, 0.55, 12);
-      redZoneMesh = new THREE.Mesh(redGeo, invisibleMat);
-      redZoneMesh.position.set(0, 0.95, 0);
-      redZoneMesh.name = "RED_ZONE";
-      character.add(redZoneMesh);
+      // रेड ज़ोन (कमर और संवेदनशील हिस्सा)
+      redZoneCollider = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.56, 12), hiddenMat);
+      redZoneCollider.position.set(0, 0.92, 0);
+      redZoneCollider.name = "RED_ZONE";
+      character.add(redZoneCollider);
     }
 
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
+    function toggleStrangerLock(e) {
+      if (e) e.stopPropagation();
+      strangerLock = !strangerLock;
+      const btn = document.getElementById('stranger-btn');
+      if (strangerLock) {
+        btn.innerText = "🔒 Stranger";
+        btn.classList.add('locked');
+        speakDialogue("स्ट्रेंजर लॉक चालू हो गया है! अब मालिक के अलावा कोई भी मुझे छुएगा तो मैं सख्त आपत्ति करूँगी।");
+      } else {
+        btn.innerText = "🔓 Owner";
+        btn.classList.remove('locked');
+        speakDialogue("मालिक की पहचान हो गई है। स्ट्रेंजर लॉक बंद कर दिया गया है।");
+      }
+    }
 
+    // =========================================================================
+    // POKÉMON GO STYLE REAL FLOOR AR SESSION (WebXR Hit-Test)
+    // =========================================================================
+    async function startRealFloorAR(e) {
+      if (e) e.stopPropagation();
+      if (!navigator.xr) {
+        speakDialogue("आपके ब्राउज़र में WebXR उपलब्ध नहीं है, अभी सामान्य कैमरा मोड चल रहा है।");
+        return;
+      }
+      try {
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test'],
+          optionalFeatures: ['dom-overlay'],
+          domOverlay: { root: document.getElementById('overlay-ui') }
+        });
+
+        renderer.xr.setReferenceSpaceType('local');
+        await renderer.xr.setSession(session);
+
+        isRealARActive = true;
+        isPlacedOnFloor = false;
+        if (character) character.visible = false;
+        document.getElementById('camera-feed').style.display = 'none';
+        document.getElementById('start-ar-btn').style.display = 'none';
+
+        speakDialogue("फोन को फर्श की तरफ दिखाएं और हल्का हिलाएं। हरा घेरा दिखने पर टैप करके मुझे असली ज़मीन पर खड़ा करें!");
+
+        session.addEventListener('end', () => {
+          isRealARActive = false;
+          hitTestSourceRequested = false;
+          hitTestSource = null;
+          reticle.visible = false;
+          document.getElementById('camera-feed').style.display = 'block';
+          document.getElementById('start-ar-btn').style.display = 'block';
+          if (character) {
+            character.visible = true;
+            character.position.set(0, -1.1, -2.5);
+            targetPosition.copy(character.position);
+          }
+        });
+      } catch (err) {
+        speakDialogue("असली फ्लोर AR के लिए Google Play Services for AR ज़रूरी है। अभी सामान्य मोड में ज़मीन पर टैप करके चलाएं।");
+      }
+    }
+
+    // =========================================================================
+    // TOUCH INTERACTION & FLOOR WALKING
+    // =========================================================================
     function onScreenTap(event) {
+      if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') return;
       resetSilenceTimer();
+      if (!character) return;
+
+      const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
       pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
       pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(pointer, activeCam);
 
-      raycaster.setFromCamera(pointer, camera);
-      if (!character) return;
+      // 1. पहले चेक करें कि क्या कैरेक्टर के शरीर (Green/Red Zone) को छुआ गया है
+      if (character.visible) {
+        const bodyHits = raycaster.intersectObjects([greenZoneCollider, redZoneCollider], true);
+        if (bodyHits.length > 0) {
+          const hitZone = bodyHits[0].object.name;
 
-      // 1. Check Touch Boundaries First
-      const zoneHits = raycaster.intersectObjects([greenZoneMesh, redZoneMesh], true);
-      if (zoneHits.length > 0) {
-        const hitName = zoneHits[0].object.name;
-        if (hitName === "GREEN_ZONE") {
-          playAnim('agree');
-          speakDialogue("हाय दोस्त! हाथ मिलाने और बात करने के लिए शुक्रिया। चलो व्लॉग शुरू करते हैं!");
-          setTimeout(() => playAnim('idle'), 2200);
-          return;
-        } else if (hitName === "RED_ZONE") {
-          // 2 Steps Back + Strict Objection
-          targetPosition.z -= 0.75;
-          isWalking = true;
-          playAnim('headShake');
-          speakDialogue("पीछे हटिए! इस तरह छूना बिल्कुल मना है। अपनी बाउंड्री में रहिए!");
-          setTimeout(() => playAnim('idle'), 2500);
-          return;
+          // अगर स्ट्रेंजर लॉक चालू है तो किसी भी टच पर सख्त विरोध
+          if (strangerLock) {
+            stepBackDefensively(activeCam, "रुकिए! मैं आपको नहीं जानती। बिना अनुमति मुझे छूने की कोशिश मत कीजिए!");
+            return;
+          }
+
+          if (hitZone === "GREEN_ZONE") {
+            isWalking = false;
+            playAnimation('agree');
+            speakDialogue("हाय दोस्त! सिर थपथपाने और हाथ मिलाने के लिए शुक्रिया। बताइए आज कहाँ चलना है?");
+            setTimeout(() => { if (!isWalking) playAnimation('idle'); }, 2300);
+            return;
+          } else if (hitZone === "RED_ZONE") {
+            stepBackDefensively(activeCam, "पीछे हटिए! इस तरह गलत जगह छूना बिल्कुल मना है। अपनी बाउंड्री में रहिए!");
+            return;
+          }
         }
       }
 
-      // 2. Check Floor Tap for Game-Like Walking
-      const floorHits = raycaster.intersectObject(floorPlane);
-      if (floorHits.length > 0) {
-        const point = floorHits[0].point;
-        if (point.z < -0.7 && point.z > -7.0) {
+      // 2. असली AR मोड में हरे घेरे (Reticle) पर कैरेक्टर को खड़ा करना या चलाना
+      if (isRealARActive && reticle.visible) {
+        const floorPos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+        if (!isPlacedOnFloor) {
+          character.position.copy(floorPos);
+          targetPosition.copy(floorPos);
+          shadowPlane.position.copy(floorPos);
+          character.visible = true;
+          isPlacedOnFloor = true;
+          playAnimation('idle');
+          speakDialogue("मैं आपकी असली ज़मीन पर लॉक हो गई हूँ! अब कैमरा कहीं भी घुमाएं, मैं यहीं टिकी रहूँगी।");
+        } else {
           isSitting = false;
-          targetPosition.set(point.x, -1.1, point.z);
+          document.getElementById('sit-btn').classList.remove('active');
+          targetPosition.copy(floorPos);
+          shadowPlane.position.y = floorPos.y;
           isWalking = true;
-          playAnim('walk');
-        }
-      }
-    }
-
-    // 1.5 Feet Personal Space Check
-    function testProximity() {
-      if (!character) return;
-      character.position.set(0, -1.1, -0.45); // Move inside 1.5ft limit
-      setTimeout(() => {
-        targetPosition.set(0.45, -1.1, -2.2); // Step aside & back
-        isWalking = true;
-        playAnim('walk');
-        speakDialogue("अरे संभलकर! थोड़ी जगह दीजिए, आप बहुत ज़्यादा करीब आ गए हैं।");
-      }, 400);
-    }
-
-    function setFloorWalkMode() {
-      if (!character) return;
-      isSitting = false;
-      targetPosition.set((Math.random() - 0.5) * 1.2, -1.1, -2.2);
-      isWalking = true;
-      playAnim('walk');
-      speakDialogue("मैं आपके पास चलकर आ रही हूँ!");
-    }
-
-    function toggleSit() {
-      if (!character) return;
-      isSitting = !isSitting;
-      if (isSitting) {
-        isWalking = false;
-        playAnim('sneak_pose');
-        character.position.y = -1.42;
-        speakDialogue("वाह, यहाँ बैठने की अच्छी जगह है! अगर किसी और ने मेरी सीट ली तो मैं तुरंत उठ जाऊँगी।");
-      } else {
-        character.position.y = -1.1;
-        playAnim('idle');
-        speakDialogue("चलो, अब उठकर आगे चलते हैं!");
-      }
-    }
-
-    function playAnim(name) {
-      if (!animations[name]) return;
-      if (currentAction && currentAction !== animations[name]) {
-        currentAction.fadeOut(0.25);
-      }
-      currentAction = animations[name];
-      currentAction.reset().fadeIn(0.25).play();
-    }
-
-    // =========================================================================
-    // PHASE 5 & 6: PROACTIVE GEMINI VISION + 3-SEC OFFLINE FALLBACK + TTS
-    // =========================================================================
-    function resetSilenceTimer() {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        triggerProactiveVision(false);
-      }, SILENCE_LIMIT_MS);
-    }
-
-    async function triggerProactiveVision(manualTrigger) {
-      resetSilenceTimer();
-      const apiKey = localStorage.getItem('GEMINI_KEY');
-      
-      // Capture 1 frame from live camera
-      const video = document.getElementById('camera-feed');
-      const capCanvas = document.getElementById('capture-canvas');
-      capCanvas.width = 480;
-      capCanvas.height = 360;
-      const ctx = capCanvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, capCanvas.width, capCanvas.height);
-      const base64Image = capCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
-
-      if (!apiKey) {
-        if (manualTrigger) {
-          speakDialogue("सामने का नज़ारा बढ़िया लग रहा है! ऊपर अपनी Gemini API Key डालेंगे तो मैं सामने रखी हर चीज़ पहचान कर बात करूँगी।");
+          playAnimation('walk');
         }
         return;
       }
 
-      // Phase 6: 3-Second Offline Fallback Timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-      try {
-        document.getElementById('status-dot').style.background = '#ffeb3b';
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: "तुम मेरी एक जीवंत 3D AR व्लॉगिंग पार्टनर हो। सामने कैमरे में जो दिख रहा है (कमरा, गाड़ी, खाना, सड़क, दुकान या सामान), उसे देखकर एक दोस्त की तरह हिंदी में सिर्फ 1 छोटा और मजेदार वाक्य या सवाल बोलो।" },
-                { inline_data: { mime_type: "image/jpeg", data: base64Image } }
-              ]
-            }]
-          })
-        });
-        clearTimeout(timeoutId);
-        const data = await response.json();
-        document.getElementById('status-dot').style.background = '#00e676';
-        const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "अरे वाह, सामने का माहौल तो काफी दिलचस्प लग रहा है!";
-        speakDialogue(reply);
-      } catch (err) {
-        // Offline Fallback Triggered after 3 seconds
-        document.getElementById('status-dot').style.background = '#ff9100';
-        speakDialogue("हम्म... नेटवर्क थोड़ा स्लो लग रहा है, पर मैं यहीं आपके साथ हूँ! बताइए अगला शॉट कहाँ लेना है?");
-      }
-    }
-
-    function updateDialogue(text) {
-      document.getElementById('dialogue-box').innerHTML = `<b>AI Companion:</b> ${text}`;
-    }
-
-    function speakDialogue(text) {
-      updateDialogue(text);
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = 'hi-IN';
-        utter.rate = 1.02;
-        window.speechSynthesis.speak(utter);
-      }
-    }
-
-    // =========================================================================
-    // PHASE 3: LIVING IDLE SYSTEM & GAME-LIKE MOVEMENT LOOP
-    // =========================================================================
-    function animate() {
-      requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      const elapsed = clock.getElapsedTime();
-
-      if (mixer) mixer.update(delta);
-
-      if (character) {
-        // Smooth Walking towards Target Position
-        if (isWalking) {
-          const dist = character.position.distanceTo(targetPosition);
-          if (dist > 0.08) {
-            const dir = new THREE.Vector3().subVectors(targetPosition, character.position).normalize();
-            character.position.addScaledVector(dir, delta * 1.15);
-            character.lookAt(camera.position.x, character.position.y, camera.position.z);
-          } else {
-            isWalking = false;
-            playAnim('idle');
+      // 3. सामान्य कैमरा मोड में फर्श पर टैप करके चलाना
+      if (!isRealARActive) {
+        const floorHits = raycaster.intersectObject(shadowPlane);
+        if (floorHits.length > 0) {
+          const pt = floorHits[0].point;
+          if (pt.z < -0.7 && pt.z > -7.5) {
+            isSitting = false;
+            targetPosition.set(pt.x, -1.1, pt.z);
+            isWalking = true;
+            playAnimation('walk');
           }
-        } else {
-          // Living Breathing Loop & Subtle Micro-Movement + Look-At User
-          const breathScale = 1.0 + Math.sin(elapsed * 2.5) * 0.008;
-          character.scale.y = breathScale;
-          character.lookAt(camera.position.x, character.position.y, camera.position.z);
         }
       }
-
-      renderer.render(scene, camera);
     }
 
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+    // रेड ज़ोन या स्ट्रेंजर टच पर तुरंत 2 कदम पीछे हटना
+    function stepBackDefensively(activeCam, message) {
+      isSitting = false;
+      const camPos = new THREE.Vector3();
+      activeCam.getWorldPosition(camPos);
+      const awayDir = new THREE.Vector3().subVectors(character.position, camPos).normalize();
+      awayDir.y = 0;
+      if (awayDir.lengthSq() === 0) awayDir.set(0, 0, -1);
+
+      targetPosition.copy(character.position).addScaledVector(awayDir, 0.75);
+      playAnimation('headShake');
+      speakDialogue(message);
+      setTimeout(() => {
+        isWalking = true;
+        playAnimation('walk');
+      }, 500);
     }
 
-    initCamera();
-    initARScene();
-  </script>
-</body>
-</html>
+    // =========================================================================
+    // PHASE 3 & 4: ROAM, SIT, SEAT PROTECTION & 1.5FT PERSONAL SPACE
+    // =========================================================================
+    function toggleRoam(e) {
+      if (e) e.stopPropagation();
+      resetSilenceTimer();
+      if (!character || !character.visible) {
+        speakDialogue("पहले ज़मीन पर हरा घेरा देखकर मुझे खड़ा करें!");
+        return;
+      }
+      isRoaming = !isRoaming;
+      document.getElementById('roam-btn').classList.toggle('active', isRoaming);
+
+      if (isRoaming) {
+        isSitting = false;
+        document.getElementById('sit-btn').classList.remove('active');
+        chooseNextRoamPoint();
+        speakDialogue("ठीक है, अब मैं आपके फर्श पर अपने आप इधर-उधर घूमूँगी!");
+      } else {
+        isWalking = false;
+        playAnimation('idle');
+        speakDialogue("मैं एक जगह रुक गई हूँ।");
+      }
+    }
+
+    function chooseNextRoamPoint() {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 0.55 + Math.random() * 0.85;
+      targetPosition.set(
+        character.position.x + Math.cos(angle) * dist,
+        character.position.y,
+        character.position.z + Math.sin(angle) * dist
+      );
+      isWalking = true;
+      playAnimation('walk');
+    }
+
+    function toggleSit(e) {
+      if (e) e.stopPropagation();
+      resetSilenceTimer();
+      if (!character || !character.visible) return;
+
+      isSitting = !isSitting;
+      isRoaming = false;
+      document.getElementById('roam-btn').classList.remove('active');
+      document.getElementById('sit-btn').classList.toggle('active', isSitting);
+
+      if (isSitting) {
+        isWalking = false;
+        playAnimation('sneak_pose');
+        speakDialogue("मैं यहाँ आराम से बैठ गई हूँ। अगर कोई मेरी सीट छीनेगा तो मैं तुरंत उठ जाऊँगी!");
+      } else {
+        playAnimation('idle');
+        speakDialogue("चलो, अब उठकर आगे चलते हैं!");
+      }
+    }
+
+    // 1.5 फीट पर्सनल स्पेस और सीट चोरी प्रोटेक्शन टेस्ट
+    function testPersonalSpace(e) {
+      if (e) e.stopPropagation();
+      resetSilenceTimer();
+      if (!character || !character.visible) return;
+
+      const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+      triggerPersonalSpaceReaction(activeCam);
+    }
+
+    function triggerPersonalSpaceReaction(ac
